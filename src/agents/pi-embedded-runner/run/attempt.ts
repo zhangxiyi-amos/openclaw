@@ -64,6 +64,7 @@ import { isAbortError } from "../abort.js";
 import { appendCacheTtlTimestamp, isCacheTtlEligibleProvider } from "../cache-ttl.js";
 import { buildEmbeddedExtensionPaths } from "../extensions.js";
 import { applyExtraParamsToAgent } from "../extra-params.js";
+import { wrapStreamFnForReasoningConsistency } from "../openai-reasoning-compat.js";
 import {
   logToolSchemasForGoogle,
   sanitizeSessionHistory,
@@ -524,6 +525,15 @@ export async function runEmbeddedAttempt(
         params.modelId,
         params.streamParams,
       );
+
+      // Ensure reasoning_content consistency for OpenAI-compatible providers.
+      // Some providers (e.g. Kimi/Moonshot) reject requests when reasoning_content
+      // is present on some assistant messages but missing on tool-call-only ones.
+      if (params.model.api === "openai-completions") {
+        activeSession.agent.streamFn = wrapStreamFnForReasoningConsistency(
+          activeSession.agent.streamFn ?? streamSimple,
+        );
+      }
 
       if (cacheTrace) {
         cacheTrace.recordStage("session:loaded", {
