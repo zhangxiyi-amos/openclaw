@@ -29,6 +29,9 @@ export const DEFAULT_HEARTBEAT_FILENAME = "HEARTBEAT.md";
 export const DEFAULT_BOOTSTRAP_FILENAME = "BOOTSTRAP.md";
 export const DEFAULT_MEMORY_FILENAME = "MEMORY.md";
 export const DEFAULT_MEMORY_ALT_FILENAME = "memory.md";
+export const DEFAULT_NOW_FILENAME = "NOW.md";
+export const DEFAULT_SELF_REVIEW_FILENAME = "SELF-REVIEW.md";
+export const DEFAULT_WORKFLOWS_FILENAME = "WORKFLOWS.md";
 
 function stripFrontMatter(content: string): string {
   if (!content.startsWith("---")) {
@@ -66,7 +69,10 @@ export type WorkspaceBootstrapFileName =
   | typeof DEFAULT_HEARTBEAT_FILENAME
   | typeof DEFAULT_BOOTSTRAP_FILENAME
   | typeof DEFAULT_MEMORY_FILENAME
-  | typeof DEFAULT_MEMORY_ALT_FILENAME;
+  | typeof DEFAULT_MEMORY_ALT_FILENAME
+  | typeof DEFAULT_NOW_FILENAME
+  | typeof DEFAULT_SELF_REVIEW_FILENAME
+  | typeof DEFAULT_WORKFLOWS_FILENAME;
 
 export type WorkspaceBootstrapFile = {
   name: WorkspaceBootstrapFileName;
@@ -270,6 +276,18 @@ export async function loadWorkspaceBootstrapFiles(dir: string): Promise<Workspac
     {
       name: DEFAULT_BOOTSTRAP_FILENAME,
       filePath: path.join(resolvedDir, DEFAULT_BOOTSTRAP_FILENAME),
+    },
+    {
+      name: DEFAULT_NOW_FILENAME,
+      filePath: path.join(resolvedDir, DEFAULT_NOW_FILENAME),
+    },
+    {
+      name: DEFAULT_SELF_REVIEW_FILENAME,
+      filePath: path.join(resolvedDir, DEFAULT_SELF_REVIEW_FILENAME),
+    },
+    {
+      name: DEFAULT_WORKFLOWS_FILENAME,
+      filePath: path.join(resolvedDir, DEFAULT_WORKFLOWS_FILENAME),
     },
   ];
 
