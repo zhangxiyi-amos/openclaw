@@ -1,6 +1,6 @@
 ---
 name: session-memory
-description: "Save session context to memory when /new command is issued"
+description: "Notify agent to archive session memories when /new command is issued"
 homepage: https://docs.openclaw.ai/hooks#session-memory
 metadata:
   {
@@ -8,7 +8,6 @@ metadata:
       {
         "emoji": "💾",
         "events": ["command:new"],
-        "requires": { "config": ["workspace.dir"] },
         "install": [{ "id": "bundled", "kind": "bundled", "label": "Bundled with OpenClaw" }],
       },
   }
@@ -16,75 +15,35 @@ metadata:
 
 # Session Memory Hook
 
-Automatically saves session context to your workspace memory when you issue the `/new` command.
+Notifies the agent to archive session memories when you issue the `/new` command.
 
 ## What It Does
 
 When you run `/new` to start a fresh session:
 
-1. **Finds the previous session** - Uses the pre-reset session entry to locate the correct transcript
-2. **Extracts conversation** - Reads the last N user/assistant messages from the session (default: 15, configurable)
-3. **Generates descriptive slug** - Uses LLM to create a meaningful filename slug based on conversation content
-4. **Saves to memory** - Creates a new file at `<workspace>/memory/YYYY-MM-DD-slug.md`
-5. **Sends confirmation** - Notifies you with the file path
+1. **Sends a system event** - Injects a prompt into the session asking the agent to review and archive
+2. **Agent decides** - The agent uses its full context (workspace files, memory, personality) to decide what's worth saving
+3. **Human-quality archives** - Results in better memory files because the agent understands what matters
 
-## Output Format
+## Why This Approach
 
-Memory files are created with the following format:
+Previously, the hook used a cold-start LLM to generate slugs and write files directly. This had problems:
 
-```markdown
-# Session: 2026-01-16 14:30:00 UTC
+- No context about what's important
+- Generated low-quality summaries
+- Created files with meaningless slugs
+- Didn't follow workspace conventions
 
-- **Session Key**: agent:main:main
-- **Session ID**: abc123def456
-- **Source**: telegram
-```
+Now the main agent handles archiving with full context:
 
-## Filename Examples
+- Knows the user's preferences
+- Understands what's worth remembering
+- Follows established file formats
+- Can update existing files instead of creating new ones
 
-The LLM generates descriptive slugs based on your conversation:
+## Output
 
-- `2026-01-16-vendor-pitch.md` - Discussion about vendor evaluation
-- `2026-01-16-api-design.md` - API architecture planning
-- `2026-01-16-bug-fix.md` - Debugging session
-- `2026-01-16-1430.md` - Fallback timestamp if slug generation fails
-
-## Requirements
-
-- **Config**: `workspace.dir` must be set (automatically configured during onboarding)
-
-The hook uses your configured LLM provider to generate slugs, so it works with any provider (Anthropic, OpenAI, etc.).
-
-## Configuration
-
-The hook supports optional configuration:
-
-| Option     | Type   | Default | Description                                                     |
-| ---------- | ------ | ------- | --------------------------------------------------------------- |
-| `messages` | number | 15      | Number of user/assistant messages to include in the memory file |
-
-Example configuration:
-
-```json
-{
-  "hooks": {
-    "internal": {
-      "entries": {
-        "session-memory": {
-          "enabled": true,
-          "messages": 25
-        }
-      }
-    }
-  }
-}
-```
-
-The hook automatically:
-
-- Uses your workspace directory (`~/.openclaw/workspace` by default)
-- Uses your configured LLM for slug generation
-- Falls back to timestamp slugs if LLM is unavailable
+The agent writes to `memory/YYYY-MM-DD.md` (or updates existing files) based on its judgment.
 
 ## Disabling
 
@@ -94,7 +53,7 @@ To disable this hook:
 openclaw hooks disable session-memory
 ```
 
-Or remove it from your config:
+Or in config:
 
 ```json
 {
