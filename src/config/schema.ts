@@ -1,6 +1,5 @@
 import { CHANNEL_IDS } from "../channels/registry.js";
 import { VERSION } from "../version.js";
-import { IRC_FIELD_HELP, IRC_FIELD_LABELS } from "./schema.irc.js";
 import { OpenClawSchema } from "./zod-schema.js";
 
 export type ConfigUiHint = {
@@ -395,7 +394,6 @@ const FIELD_LABELS: Record<string, string> = {
   "plugins.installs.*.installPath": "Plugin Install Path",
   "plugins.installs.*.version": "Plugin Install Version",
   "plugins.installs.*.installedAt": "Plugin Install Time",
-  ...IRC_FIELD_LABELS,
 };
 
 const FIELD_HELP: Record<string, string> = {
@@ -764,7 +762,6 @@ const FIELD_HELP: Record<string, string> = {
     "Optional PluralKit token for resolving private systems or members.",
   "channels.slack.dm.policy":
     'Direct message access control ("pairing" recommended). "open" requires channels.slack.dm.allowFrom=["*"].',
-  ...IRC_FIELD_HELP,
 };
 
 const FIELD_PLACEHOLDERS: Record<string, string> = {
