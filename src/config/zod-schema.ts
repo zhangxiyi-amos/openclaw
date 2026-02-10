@@ -82,11 +82,23 @@ const MemoryQmdSchema = z
   })
   .strict();
 
+const MemoryConsolidationSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    prompt: z.string().optional(),
+    model: z.string().optional(),
+    thinking: z.string().optional(),
+    timeoutSeconds: z.number().int().positive().optional(),
+  })
+  .strict()
+  .optional();
+
 const MemorySchema = z
   .object({
     backend: z.union([z.literal("builtin"), z.literal("qmd")]).optional(),
     citations: z.union([z.literal("auto"), z.literal("on"), z.literal("off")]).optional(),
     qmd: MemoryQmdSchema.optional(),
+    consolidation: MemoryConsolidationSchema,
   })
   .strict()
   .optional();

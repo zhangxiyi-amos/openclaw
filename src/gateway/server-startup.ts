@@ -15,6 +15,7 @@ import {
   triggerInternalHook,
 } from "../hooks/internal-hooks.js";
 import { loadInternalHooks } from "../hooks/loader.js";
+import { registerMemoryConsolidationHook } from "../hooks/memory-consolidation.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { type PluginServicesHandle, startPluginServices } from "../plugins/services.js";
 import { startBrowserControlServerIfEnabled } from "./server-browser.js";
@@ -101,6 +102,8 @@ export async function startGatewaySidecars(params: {
   try {
     // Clear any previously registered hooks to ensure fresh loading
     clearInternalHooks();
+    // Register core hooks (memory consolidation checks its own config.enabled)
+    registerMemoryConsolidationHook();
     const loadedCount = await loadInternalHooks(params.cfg, params.defaultWorkspaceDir);
     if (loadedCount > 0) {
       params.logHooks.info(
