@@ -306,12 +306,50 @@ export async function loadWorkspaceBootstrapFiles(dir: string): Promise<Workspac
 
 const SUBAGENT_BOOTSTRAP_ALLOWLIST = new Set([DEFAULT_AGENTS_FILENAME, DEFAULT_TOOLS_FILENAME]);
 
+/**
+ * Memory consolidation subagents need full context to produce quality summaries.
+ * This includes personality, existing memories, and user info.
+ */
+const MEMORY_CONSOLIDATION_BOOTSTRAP_ALLOWLIST = new Set([
+  DEFAULT_AGENTS_FILENAME,
+  DEFAULT_TOOLS_FILENAME,
+  DEFAULT_SOUL_FILENAME,
+  DEFAULT_MEMORY_FILENAME,
+  DEFAULT_USER_FILENAME,
+  DEFAULT_IDENTITY_FILENAME,
+  DEFAULT_SELF_REVIEW_FILENAME,
+]);
+
+export type BootstrapMode = "default" | "minimal" | "memory-consolidation";
+
+/**
+ * Check if a session key indicates a memory consolidation task.
+ * Memory consolidation sessions use a naming convention: contains "memory-consolidation" segment.
+ */
+function isMemoryConsolidationSession(sessionKey?: string): boolean {
+  if (!sessionKey) {
+    return false;
+  }
+  return sessionKey.includes("memory-consolidation");
+}
+
 export function filterBootstrapFilesForSession(
   files: WorkspaceBootstrapFile[],
   sessionKey?: string,
+  options?: { bootstrapMode?: BootstrapMode },
 ): WorkspaceBootstrapFile[] {
+  const mode = options?.bootstrapMode;
+
+  // Memory consolidation mode: use expanded allowlist regardless of session type
+  if (mode === "memory-consolidation" || isMemoryConsolidationSession(sessionKey)) {
+    return files.filter((file) => MEMORY_CONSOLIDATION_BOOTSTRAP_ALLOWLIST.has(file.name));
+  }
+
+  // Default behavior: non-subagent sessions get all files
   if (!sessionKey || !isSubagentSessionKey(sessionKey)) {
     return files;
   }
+
+  // Subagent sessions get minimal files
   return files.filter((file) => SUBAGENT_BOOTSTRAP_ALLOWLIST.has(file.name));
 }
