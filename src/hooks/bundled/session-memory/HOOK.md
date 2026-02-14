@@ -1,7 +1,7 @@
 ---
 name: session-memory
 description: "Notify agent to archive session memories when /new command is issued"
-homepage: https://docs.openclaw.ai/hooks#session-memory
+homepage: https://docs.openclaw.ai/automation/hooks#session-memory
 metadata:
   {
     "openclaw":
