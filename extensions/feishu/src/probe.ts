@@ -1,5 +1,5 @@
-import type { FeishuProbeResult } from "./types.js";
 import { createFeishuClient, type FeishuClientCredentials } from "./client.js";
+import type { FeishuProbeResult } from "./types.js";
 
 const PROBE_CACHE_TTL_MS = 5 * 60 * 1000;
 
