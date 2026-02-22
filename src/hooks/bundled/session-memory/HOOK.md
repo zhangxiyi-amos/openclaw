@@ -1,13 +1,14 @@
 ---
 name: session-memory
-description: "Notify agent to archive session memories when /new command is issued"
+description: "Save session context to memory when /new or /reset command is issued"
 homepage: https://docs.openclaw.ai/automation/hooks#session-memory
 metadata:
   {
     "openclaw":
       {
         "emoji": "💾",
-        "events": ["command:new"],
+        "events": ["command:new", "command:reset"],
+        "requires": { "config": ["workspace.dir"] },
         "install": [{ "id": "bundled", "kind": "bundled", "label": "Bundled with OpenClaw" }],
       },
   }
@@ -15,11 +16,11 @@ metadata:
 
 # Session Memory Hook
 
-Notifies the agent to archive session memories when you issue the `/new` command.
+Automatically saves session context to your workspace memory when you issue `/new` or `/reset`.
 
 ## What It Does
 
-When you run `/new` to start a fresh session:
+When you run `/new` or `/reset` to start a fresh session:
 
 1. **Sends a system event** - Injects a prompt into the session asking the agent to review and archive
 2. **Agent decides** - The agent uses its full context (workspace files, memory, personality) to decide what's worth saving
