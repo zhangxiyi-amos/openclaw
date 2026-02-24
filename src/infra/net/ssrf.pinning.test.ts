@@ -49,8 +49,11 @@ describe("ssrf pinning", () => {
     );
   });
 
-  it("rejects private DNS results", async () => {
-    const lookup = vi.fn(async () => [{ address: "10.0.0.8", family: 4 }]) as unknown as LookupFn;
+  it.each([
+    { name: "RFC1918 private address", address: "10.0.0.8" },
+    { name: "RFC2544 benchmarking range", address: "198.18.0.1" },
+  ])("rejects blocked DNS results: $name", async ({ address }) => {
+    const lookup = vi.fn(async () => [{ address, family: 4 }]) as unknown as LookupFn;
     await expect(resolvePinnedHostname("example.com", lookup)).rejects.toThrow(/private|internal/i);
   });
 
@@ -148,6 +151,21 @@ describe("ssrf pinning", () => {
     ).resolves.toMatchObject({
       hostname: "2001:db8:1234::5efe:127.0.0.1",
       addresses: ["2001:db8:1234::5efe:127.0.0.1"],
+    });
+    expect(lookup).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts dangerouslyAllowPrivateNetwork as an allowPrivateNetwork alias", async () => {
+    const lookup = vi.fn(async () => [{ address: "127.0.0.1", family: 4 }]) as unknown as LookupFn;
+
+    await expect(
+      resolvePinnedHostnameWithPolicy("localhost", {
+        lookupFn: lookup,
+        policy: { dangerouslyAllowPrivateNetwork: true },
+      }),
+    ).resolves.toMatchObject({
+      hostname: "localhost",
+      addresses: ["127.0.0.1"],
     });
     expect(lookup).toHaveBeenCalledTimes(1);
   });

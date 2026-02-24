@@ -37,6 +37,8 @@ export type SafeBinProfileFixture = {
   deniedFlags?: readonly string[];
 };
 
+export type SafeBinProfileFixtures = Readonly<Record<string, SafeBinProfileFixture>>;
+
 const NO_FLAGS: ReadonlySet<string> = new Set();
 
 const toFlagSet = (flags?: readonly string[]): ReadonlySet<string> => {
@@ -62,8 +64,6 @@ function compileSafeBinProfiles(
     Object.entries(fixtures).map(([name, fixture]) => [name, compileSafeBinProfile(fixture)]),
   ) as Record<string, SafeBinProfile>;
 }
-
-export const SAFE_BIN_GENERIC_PROFILE_FIXTURE: SafeBinProfileFixture = {};
 
 export const SAFE_BIN_PROFILE_FIXTURES: Record<string, SafeBinProfileFixture> = {
   jq: {
@@ -134,17 +134,23 @@ export const SAFE_BIN_PROFILE_FIXTURES: Record<string, SafeBinProfileFixture> = 
       "--key",
       "--field-separator",
       "--buffer-size",
-      "--temporary-directory",
       "--parallel",
       "--batch-size",
-      "--random-source",
       "-k",
       "-t",
       "-S",
-      "-T",
     ],
     // --compress-program can invoke an external executable and breaks stdin-only guarantees.
-    deniedFlags: ["--compress-program", "--files0-from", "--output", "-o"],
+    // --random-source/--temporary-directory/-T are filesystem-dependent and not stdin-only.
+    deniedFlags: [
+      "--compress-program",
+      "--files0-from",
+      "--output",
+      "--random-source",
+      "--temporary-directory",
+      "-T",
+      "-o",
+    ],
   },
   uniq: {
     maxPositional: 0,
@@ -184,10 +190,80 @@ export const SAFE_BIN_PROFILE_FIXTURES: Record<string, SafeBinProfileFixture> = 
   },
 };
 
-export const SAFE_BIN_GENERIC_PROFILE = compileSafeBinProfile(SAFE_BIN_GENERIC_PROFILE_FIXTURE);
-
 export const SAFE_BIN_PROFILES: Record<string, SafeBinProfile> =
   compileSafeBinProfiles(SAFE_BIN_PROFILE_FIXTURES);
+
+function normalizeSafeBinProfileName(raw: string): string | null {
+  const name = raw.trim().toLowerCase();
+  return name.length > 0 ? name : null;
+}
+
+function normalizeFixtureLimit(raw: number | undefined): number | undefined {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) {
+    return undefined;
+  }
+  const next = Math.trunc(raw);
+  return next >= 0 ? next : undefined;
+}
+
+function normalizeFixtureFlags(
+  flags: readonly string[] | undefined,
+): readonly string[] | undefined {
+  if (!Array.isArray(flags) || flags.length === 0) {
+    return undefined;
+  }
+  const normalized = Array.from(
+    new Set(flags.map((flag) => flag.trim()).filter((flag) => flag.length > 0)),
+  ).toSorted((a, b) => a.localeCompare(b));
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeSafeBinProfileFixture(fixture: SafeBinProfileFixture): SafeBinProfileFixture {
+  const minPositional = normalizeFixtureLimit(fixture.minPositional);
+  const maxPositionalRaw = normalizeFixtureLimit(fixture.maxPositional);
+  const maxPositional =
+    minPositional !== undefined &&
+    maxPositionalRaw !== undefined &&
+    maxPositionalRaw < minPositional
+      ? minPositional
+      : maxPositionalRaw;
+  return {
+    minPositional,
+    maxPositional,
+    allowedValueFlags: normalizeFixtureFlags(fixture.allowedValueFlags),
+    deniedFlags: normalizeFixtureFlags(fixture.deniedFlags),
+  };
+}
+
+export function normalizeSafeBinProfileFixtures(
+  fixtures?: SafeBinProfileFixtures | null,
+): Record<string, SafeBinProfileFixture> {
+  const normalized: Record<string, SafeBinProfileFixture> = {};
+  if (!fixtures) {
+    return normalized;
+  }
+  for (const [rawName, fixture] of Object.entries(fixtures)) {
+    const name = normalizeSafeBinProfileName(rawName);
+    if (!name) {
+      continue;
+    }
+    normalized[name] = normalizeSafeBinProfileFixture(fixture);
+  }
+  return normalized;
+}
+
+export function resolveSafeBinProfiles(
+  fixtures?: SafeBinProfileFixtures | null,
+): Record<string, SafeBinProfile> {
+  const normalizedFixtures = normalizeSafeBinProfileFixtures(fixtures);
+  if (Object.keys(normalizedFixtures).length === 0) {
+    return SAFE_BIN_PROFILES;
+  }
+  return {
+    ...SAFE_BIN_PROFILES,
+    ...compileSafeBinProfiles(normalizedFixtures),
+  };
+}
 
 export function resolveSafeBinDeniedFlags(
   fixtures: Readonly<Record<string, SafeBinProfileFixture>> = SAFE_BIN_PROFILE_FIXTURES,
@@ -223,6 +299,38 @@ function isInvalidValueToken(value: string | undefined): boolean {
   return !value || !isSafeLiteralToken(value);
 }
 
+function collectKnownLongFlags(
+  allowedValueFlags: ReadonlySet<string>,
+  deniedFlags: ReadonlySet<string>,
+): string[] {
+  const known = new Set<string>();
+  for (const flag of allowedValueFlags) {
+    if (flag.startsWith("--")) {
+      known.add(flag);
+    }
+  }
+  for (const flag of deniedFlags) {
+    if (flag.startsWith("--")) {
+      known.add(flag);
+    }
+  }
+  return Array.from(known);
+}
+
+function resolveCanonicalLongFlag(flag: string, knownLongFlags: string[]): string | null {
+  if (!flag.startsWith("--") || flag.length <= 2) {
+    return null;
+  }
+  if (knownLongFlags.includes(flag)) {
+    return flag;
+  }
+  const matches = knownLongFlags.filter((candidate) => candidate.startsWith(flag));
+  if (matches.length !== 1) {
+    return null;
+  }
+  return matches[0] ?? null;
+}
+
 function consumeLongOptionToken(
   args: string[],
   index: number,
@@ -231,13 +339,22 @@ function consumeLongOptionToken(
   allowedValueFlags: ReadonlySet<string>,
   deniedFlags: ReadonlySet<string>,
 ): number {
-  if (deniedFlags.has(flag)) {
+  const knownLongFlags = collectKnownLongFlags(allowedValueFlags, deniedFlags);
+  const canonicalFlag = resolveCanonicalLongFlag(flag, knownLongFlags);
+  if (!canonicalFlag) {
     return -1;
   }
+  if (deniedFlags.has(canonicalFlag)) {
+    return -1;
+  }
+  const expectsValue = allowedValueFlags.has(canonicalFlag);
   if (inlineValue !== undefined) {
+    if (!expectsValue) {
+      return -1;
+    }
     return isSafeLiteralToken(inlineValue) ? index + 1 : -1;
   }
-  if (!allowedValueFlags.has(flag)) {
+  if (!expectsValue) {
     return index + 1;
   }
   return isInvalidValueToken(args[index + 1]) ? -1 : index + 2;
@@ -246,7 +363,7 @@ function consumeLongOptionToken(
 function consumeShortOptionClusterToken(
   args: string[],
   index: number,
-  raw: string,
+  _raw: string,
   cluster: string,
   flags: string[],
   allowedValueFlags: ReadonlySet<string>,
@@ -266,7 +383,7 @@ function consumeShortOptionClusterToken(
     }
     return isInvalidValueToken(args[index + 1]) ? -1 : index + 2;
   }
-  return hasGlobToken(raw) ? -1 : index + 1;
+  return -1;
 }
 
 function consumePositionalToken(token: string, positional: string[]): boolean {
