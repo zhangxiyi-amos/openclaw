@@ -569,6 +569,7 @@ export async function processDiscordMessage(ctx: DiscordMessagePreflightContext)
   const { dispatcher, replyOptions, markDispatchIdle } = createReplyDispatcherWithTyping({
     ...prefixOptions,
     humanDelay: resolveHumanDelayConfig(cfg, route.agentId),
+    typingCallbacks,
     deliver: async (payload: ReplyPayload, info) => {
       const isFinal = info.kind === "final";
       if (payload.isReasoning) {
@@ -722,12 +723,18 @@ export async function processDiscordMessage(ctx: DiscordMessagePreflightContext)
     dispatchError = true;
     throw err;
   } finally {
-    // Must stop() first to flush debounced content before clear() wipes state
-    await draftStream?.stop();
-    if (!finalizedViaPreviewMessage) {
-      await draftStream?.clear();
+    try {
+      // Must stop() first to flush debounced content before clear() wipes state.
+      await draftStream?.stop();
+      if (!finalizedViaPreviewMessage) {
+        await draftStream?.clear();
+      }
+    } catch (err) {
+      // Draft cleanup should never keep typing alive.
+      logVerbose(`discord: draft cleanup failed: ${String(err)}`);
+    } finally {
+      markDispatchIdle();
     }
-    markDispatchIdle();
     if (statusReactionsEnabled) {
       if (dispatchError) {
         await statusReactions.setError();
