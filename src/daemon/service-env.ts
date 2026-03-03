@@ -36,6 +36,50 @@ const SERVICE_PROXY_ENV_KEYS = [
   "all_proxy",
 ] as const;
 
+const SERVICE_UPSTREAM_PROXY_ENV_KEYS = [
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+] as const;
+const LOOPBACK_NO_PROXY_TOKENS = ["localhost", "127.0.0.1", "::1"] as const;
+
+function normalizeNoProxyValue(value: string | undefined): string[] {
+  if (typeof value !== "string") {
+    return [];
+  }
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function mergeLoopbackNoProxy(
+  proxyEnv: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  const hasProxy = SERVICE_UPSTREAM_PROXY_ENV_KEYS.some((key) => {
+    const value = proxyEnv[key];
+    return typeof value === "string" && value.trim().length > 0;
+  });
+  if (!hasProxy) {
+    return proxyEnv;
+  }
+
+  const merged = new Set<string>([
+    ...normalizeNoProxyValue(proxyEnv.NO_PROXY),
+    ...normalizeNoProxyValue(proxyEnv.no_proxy),
+  ]);
+  for (const token of LOOPBACK_NO_PROXY_TOKENS) {
+    merged.add(token);
+  }
+  const mergedValue = [...merged].join(",");
+  proxyEnv.NO_PROXY = mergedValue;
+  proxyEnv.no_proxy = mergedValue;
+  return proxyEnv;
+}
+
 function readServiceProxyEnvironment(
   env: Record<string, string | undefined>,
 ): Record<string, string | undefined> {
@@ -51,7 +95,7 @@ function readServiceProxyEnvironment(
     }
     out[key] = trimmed;
   }
-  return out;
+  return mergeLoopbackNoProxy(out);
 }
 
 function addNonEmptyDir(dirs: string[], dir: string | undefined): void {

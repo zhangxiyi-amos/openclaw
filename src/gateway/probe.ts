@@ -28,6 +28,46 @@ export type GatewayProbeResult = {
   configSnapshot: unknown;
 };
 
+type ProbeStepResult<T> = { ok: true; value: T } | { ok: false; error: string };
+
+async function runProbeStep<T>(params: {
+  client: GatewayClient;
+  method: string;
+  requestParams?: unknown;
+  timeoutMs: number;
+}): Promise<ProbeStepResult<T>> {
+  const timeoutMs = Math.max(100, params.timeoutMs);
+  return await new Promise<ProbeStepResult<T>>((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve({ ok: false, error: "timeout" });
+    }, timeoutMs);
+
+    void params.client
+      .request<T>(params.method, params.requestParams)
+      .then((value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        resolve({ ok: true, value });
+      })
+      .catch((err) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        resolve({ ok: false, error: formatErrorMessage(err) });
+      });
+  });
+}
+
 export async function probeGateway(opts: {
   url: string;
   auth?: GatewayProbeAuth;
@@ -68,35 +108,62 @@ export async function probeGateway(opts: {
       },
       onHelloOk: async () => {
         connectLatencyMs = Date.now() - startedAt;
-        try {
-          const [health, status, presence, configSnapshot] = await Promise.all([
-            client.request("health"),
-            client.request("status"),
-            client.request("system-presence"),
-            client.request("config.get", {}),
-          ]);
-          settle({
-            ok: true,
-            connectLatencyMs,
-            error: null,
-            close,
-            health,
-            status,
-            presence: Array.isArray(presence) ? (presence as SystemPresence[]) : null,
-            configSnapshot,
-          });
-        } catch (err) {
+        const deadline = startedAt + Math.max(250, opts.timeoutMs);
+        const remainingBudgetMs = () => Math.max(100, deadline - Date.now());
+
+        const statusResult = await runProbeStep({
+          client,
+          method: "status",
+          timeoutMs: remainingBudgetMs(),
+        });
+        if (!statusResult.ok) {
           settle({
             ok: false,
             connectLatencyMs,
-            error: formatErrorMessage(err),
+            error: statusResult.error,
             close,
             health: null,
             status: null,
             presence: null,
             configSnapshot: null,
           });
+          return;
         }
+
+        const auxiliaryBudgetMs = Math.max(
+          100,
+          Math.min(1_000, Math.floor(remainingBudgetMs() * 0.6)),
+        );
+        const [healthResult, presenceResult, configResult] = await Promise.all([
+          runProbeStep({
+            client,
+            method: "health",
+            timeoutMs: auxiliaryBudgetMs,
+          }),
+          runProbeStep<SystemPresence[]>({
+            client,
+            method: "system-presence",
+            timeoutMs: auxiliaryBudgetMs,
+          }),
+          runProbeStep({
+            client,
+            method: "config.get",
+            requestParams: {},
+            timeoutMs: auxiliaryBudgetMs,
+          }),
+        ]);
+
+        settle({
+          ok: true,
+          connectLatencyMs,
+          error: null,
+          close,
+          health: healthResult.ok ? healthResult.value : null,
+          status: statusResult.value,
+          presence:
+            presenceResult.ok && Array.isArray(presenceResult.value) ? presenceResult.value : null,
+          configSnapshot: configResult.ok ? configResult.value : null,
+        });
       },
     });
 

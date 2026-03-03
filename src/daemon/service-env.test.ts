@@ -325,7 +325,7 @@ describe("buildServiceEnvironment", () => {
 
     expect(env.HTTP_PROXY).toBe("http://proxy.local:7890");
     expect(env.HTTPS_PROXY).toBe("https://proxy.local:7890");
-    expect(env.NO_PROXY).toBe("localhost,127.0.0.1");
+    expect(env.NO_PROXY).toBe("localhost,127.0.0.1,::1");
     expect(env.http_proxy).toBe("http://proxy.local:7890");
     expect(env.all_proxy).toBe("socks5://proxy.local:1080");
   });
@@ -349,7 +349,33 @@ describe("buildNodeServiceEnvironment", () => {
     });
 
     expect(env.HTTPS_PROXY).toBe("https://proxy.local:7890");
-    expect(env.no_proxy).toBe("localhost,127.0.0.1");
+    expect(env.no_proxy).toBe("localhost,127.0.0.1,::1");
+  });
+
+  it("adds loopback no_proxy defaults when proxy env is present", () => {
+    const env = buildServiceEnvironment({
+      env: {
+        HOME: "/home/user",
+        HTTP_PROXY: "http://proxy.local:7890",
+      },
+      port: 18789,
+    });
+
+    expect(env.NO_PROXY).toBe("localhost,127.0.0.1,::1");
+    expect(env.no_proxy).toBe("localhost,127.0.0.1,::1");
+  });
+
+  it("merges loopback defaults into existing no_proxy values", () => {
+    const env = buildNodeServiceEnvironment({
+      env: {
+        HOME: "/home/user",
+        HTTPS_PROXY: "https://proxy.local:7890",
+        no_proxy: "corp.internal,localhost",
+      },
+    });
+
+    expect(env.NO_PROXY).toBe("corp.internal,localhost,127.0.0.1,::1");
+    expect(env.no_proxy).toBe("corp.internal,localhost,127.0.0.1,::1");
   });
 
   it("forwards TMPDIR for node services", () => {
