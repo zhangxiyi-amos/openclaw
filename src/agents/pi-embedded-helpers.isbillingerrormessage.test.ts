@@ -430,6 +430,15 @@ describe("isFailoverErrorMessage", () => {
       expect(isFailoverErrorMessage(sample)).toBe(true);
     }
   });
+
+  it("matches network transport failures that should continue failover", () => {
+    const samples = ["fetch failed", "Connection error.", "socket hang up", "ECONNRESET"];
+    for (const sample of samples) {
+      expect(isTimeoutErrorMessage(sample)).toBe(true);
+      expect(classifyFailoverReason(sample)).toBe("timeout");
+      expect(isFailoverErrorMessage(sample)).toBe(true);
+    }
+  });
 });
 
 describe("parseImageSizeError", () => {
@@ -482,6 +491,8 @@ describe("classifyFailoverReason", () => {
     expect(classifyFailoverReason("credit balance too low")).toBe("billing");
     expect(classifyFailoverReason("deadline exceeded")).toBe("timeout");
     expect(classifyFailoverReason("request ended without sending any chunks")).toBe("timeout");
+    expect(classifyFailoverReason("fetch failed")).toBe("timeout");
+    expect(classifyFailoverReason("Connection error.")).toBe("timeout");
     expect(
       classifyFailoverReason(
         "521 <!DOCTYPE html><html><head><title>Web server is down</title></head><body>Cloudflare</body></html>",

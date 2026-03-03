@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import { createHostSandboxFsBridge } from "../../test-helpers/host-sandbox-fs-bridge.js";
 import { createUnsafeMountedSandbox } from "../../test-helpers/unsafe-mounted-sandbox.js";
@@ -275,6 +276,64 @@ describe("detectAndLoadPromptImages", () => {
 
     expect(result.detectedRefs).toHaveLength(0);
     expect(result.images).toHaveLength(0);
+  });
+
+  it("reloads selected history images for follow-up prompts without reloading full history", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-history-image-"));
+    const imagePath = path.join(stateDir, "photo.png");
+    const pngB64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/woAAn8B9FD5fHAAAAAASUVORK5CYII=";
+    await fs.writeFile(imagePath, Buffer.from(pngB64, "base64"));
+
+    try {
+      const historyMessages: AgentMessage[] = [
+        {
+          role: "user",
+          content: [{ type: "text", text: `[media attached: ${imagePath} (image/png)]` }],
+        } as AgentMessage,
+        {
+          role: "assistant",
+          content: "received",
+        } as unknown as AgentMessage,
+      ];
+
+      const result = await detectAndLoadPromptImages({
+        prompt: "Compare this to the first image",
+        workspaceDir: stateDir,
+        model: { input: ["text", "image"] },
+        historyMessages,
+        sandbox: { root: stateDir, bridge: createHostSandboxFsBridge(stateDir) },
+      });
+
+      expect(result.images).toHaveLength(0);
+      expect(result.historyImagesByIndex.size).toBe(1);
+      expect(result.historyImagesByIndex.get(0)).toHaveLength(1);
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not reload history images for unrelated prompts", async () => {
+    const historyMessages: AgentMessage[] = [
+      {
+        role: "user",
+        content: [{ type: "text", text: "[media attached: /tmp/photo.png (image/png)]" }],
+      } as AgentMessage,
+      {
+        role: "assistant",
+        content: "received",
+      } as unknown as AgentMessage,
+    ];
+
+    const result = await detectAndLoadPromptImages({
+      prompt: "Summarize the last answer",
+      workspaceDir: "/tmp",
+      model: { input: ["text", "image"] },
+      historyMessages,
+    });
+
+    expect(result.images).toHaveLength(0);
+    expect(result.historyImagesByIndex.size).toBe(0);
   });
 
   it("blocks prompt image refs outside workspace when sandbox workspaceOnly is enabled", async () => {

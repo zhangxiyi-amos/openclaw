@@ -45,6 +45,8 @@ export interface DetectedImageRef {
   type: "path";
   /** The resolved/normalized path */
   resolved: string;
+  /** Index of the history message this ref was found in */
+  messageIndex?: number;
 }
 
 /**
@@ -270,6 +272,94 @@ export function modelSupportsImages(model: { input?: string[] }): boolean {
   return model.input?.includes("image") ?? false;
 }
 
+const HISTORY_IMAGE_REF_RE =
+  /\b(?:the|this|that|these|those|previous|earlier|prior|attached|above|same|original|initial|first|second|third|last|latest|both)\s+images?\b/i;
+const HISTORY_IMAGE_COMPARE_RE = /\bcompare(?:\s+\w+){0,6}\s+images?\b/i;
+const MAX_REFERENCED_HISTORY_IMAGES = 4;
+
+function extractTextFromMessage(message: unknown): string {
+  if (!message || typeof message !== "object") {
+    return "";
+  }
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  const textParts: string[] = [];
+  for (const part of content) {
+    if (!part || typeof part !== "object") {
+      continue;
+    }
+    const record = part as Record<string, unknown>;
+    if (record.type === "text" && typeof record.text === "string") {
+      textParts.push(record.text);
+    }
+  }
+  return textParts.join("\n").trim();
+}
+
+function promptMayReferenceHistoryImages(prompt: string): boolean {
+  const normalized = prompt.trim();
+  if (!normalized) {
+    return false;
+  }
+  return HISTORY_IMAGE_REF_RE.test(normalized) || HISTORY_IMAGE_COMPARE_RE.test(normalized);
+}
+
+function selectHistoryRefsForPrompt(prompt: string, refs: DetectedImageRef[]): DetectedImageRef[] {
+  if (refs.length === 0 || !promptMayReferenceHistoryImages(prompt)) {
+    return [];
+  }
+  if (refs.length <= MAX_REFERENCED_HISTORY_IMAGES) {
+    return refs;
+  }
+
+  const prefersOldest = /\b(?:first|earlier|original|initial|above)\s+images?\b/i.test(prompt);
+  const selected = prefersOldest
+    ? refs.slice(0, MAX_REFERENCED_HISTORY_IMAGES)
+    : refs.slice(-MAX_REFERENCED_HISTORY_IMAGES);
+  return prefersOldest
+    ? selected
+    : selected.toSorted((a, b) => (a.messageIndex ?? 0) - (b.messageIndex ?? 0));
+}
+
+function detectImagesFromHistory(messages: unknown[], prompt: string): DetectedImageRef[] {
+  const allRefs: DetectedImageRef[] = [];
+  const seen = new Set<string>();
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (!msg || typeof msg !== "object") {
+      continue;
+    }
+    const message = msg as { role?: string };
+    if (message.role !== "user") {
+      continue;
+    }
+
+    const text = extractTextFromMessage(msg);
+    if (!text) {
+      continue;
+    }
+
+    const refs = detectImageReferences(text);
+    for (const ref of refs) {
+      const key = normalizeRefForDedupe(ref.resolved);
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      allRefs.push({ ...ref, messageIndex: i });
+    }
+  }
+
+  return selectHistoryRefsForPrompt(prompt, allRefs);
+}
+
 /**
  * Detects and loads images referenced in a prompt for models with vision capability.
  *
@@ -285,6 +375,7 @@ export async function detectAndLoadPromptImages(params: {
   workspaceDir: string;
   model: { input?: string[] };
   existingImages?: ImageContent[];
+  historyMessages?: unknown[];
   maxBytes?: number;
   maxDimensionPx?: number;
   workspaceOnly?: boolean;
@@ -292,6 +383,8 @@ export async function detectAndLoadPromptImages(params: {
 }): Promise<{
   /** Images for the current prompt (existingImages + detected in current prompt) */
   images: ImageContent[];
+  /** Selected history images, keyed by original message index */
+  historyImagesByIndex: Map<number, ImageContent[]>;
   detectedRefs: DetectedImageRef[];
   loadedCount: number;
   skippedCount: number;
@@ -300,6 +393,7 @@ export async function detectAndLoadPromptImages(params: {
   if (!modelSupportsImages(params.model)) {
     return {
       images: [],
+      historyImagesByIndex: new Map(),
       detectedRefs: [],
       loadedCount: 0,
       skippedCount: 0,
@@ -307,20 +401,32 @@ export async function detectAndLoadPromptImages(params: {
   }
 
   // Detect images from current prompt
-  const allRefs = detectImageReferences(params.prompt);
+  const promptRefs = detectImageReferences(params.prompt);
+  const historyRefs = params.historyMessages
+    ? detectImagesFromHistory(params.historyMessages, params.prompt)
+    : [];
+  const seenPromptRefs = new Set(promptRefs.map((ref) => normalizeRefForDedupe(ref.resolved)));
+  const uniqueHistoryRefs = historyRefs.filter(
+    (ref) => !seenPromptRefs.has(normalizeRefForDedupe(ref.resolved)),
+  );
+  const allRefs = [...promptRefs, ...uniqueHistoryRefs];
 
   if (allRefs.length === 0) {
     return {
       images: params.existingImages ?? [],
+      historyImagesByIndex: new Map(),
       detectedRefs: [],
       loadedCount: 0,
       skippedCount: 0,
     };
   }
 
-  log.debug(`Native image: detected ${allRefs.length} image refs in prompt`);
+  log.debug(
+    `Native image: detected ${allRefs.length} image refs (${promptRefs.length} in prompt, ${uniqueHistoryRefs.length} from history)`,
+  );
 
   const promptImages: ImageContent[] = [...(params.existingImages ?? [])];
+  const historyImagesByIndex = new Map<number, ImageContent[]>();
 
   let loadedCount = 0;
   let skippedCount = 0;
@@ -332,7 +438,16 @@ export async function detectAndLoadPromptImages(params: {
       sandbox: params.sandbox,
     });
     if (image) {
-      promptImages.push(image);
+      if (ref.messageIndex !== undefined) {
+        const existing = historyImagesByIndex.get(ref.messageIndex);
+        if (existing) {
+          existing.push(image);
+        } else {
+          historyImagesByIndex.set(ref.messageIndex, [image]);
+        }
+      } else {
+        promptImages.push(image);
+      }
       loadedCount++;
       log.debug(`Native image: loaded ${ref.type} ${ref.resolved}`);
     } else {
@@ -348,9 +463,21 @@ export async function detectAndLoadPromptImages(params: {
     "prompt:images",
     imageSanitization,
   );
+  const sanitizedHistoryImagesByIndex = new Map<number, ImageContent[]>();
+  for (const [index, images] of historyImagesByIndex) {
+    const sanitized = await sanitizeImagesWithLog(
+      images,
+      `history:images:${index}`,
+      imageSanitization,
+    );
+    if (sanitized.length > 0) {
+      sanitizedHistoryImagesByIndex.set(index, sanitized);
+    }
+  }
 
   return {
     images: sanitizedPromptImages,
+    historyImagesByIndex: sanitizedHistoryImagesByIndex,
     detectedRefs: allRefs,
     loadedCount,
     skippedCount,
