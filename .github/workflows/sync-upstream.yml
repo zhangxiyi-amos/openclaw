@@ -7,10 +7,14 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: sync-upstream-main
   cancel-in-progress: false
+
+env:
+  SYNC_BRANCH: sync/upstream-main
 
 jobs:
   sync:
@@ -32,6 +36,7 @@ jobs:
           set -euo pipefail
           git remote add upstream https://github.com/openclaw/openclaw.git 2>/dev/null || true
           git fetch origin main
+          git fetch origin "${SYNC_BRANCH}" 2>/dev/null || true
           git fetch upstream main
 
       - name: Check whether sync is needed
@@ -50,11 +55,80 @@ jobs:
           echo "Sync required from upstream/main into fork main." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Merge upstream/main
+        id: merge_upstream
         if: steps.sync_state.outputs.needed == 'true'
+        continue-on-error: true
         run: |
           set -euo pipefail
           git merge --no-edit upstream/main
 
       - name: Push fork main
-        if: steps.sync_state.outputs.needed == 'true'
+        if: steps.sync_state.outputs.needed == 'true' && steps.merge_upstream.outcome == 'success'
         run: git push origin main
+
+      - name: Record clean sync
+        if: steps.sync_state.outputs.needed == 'true' && steps.merge_upstream.outcome == 'success'
+        run: echo "Merged upstream/main directly into fork main." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish conflict branch
+        if: steps.sync_state.outputs.needed == 'true' && steps.merge_upstream.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          git merge --abort 2>/dev/null || true
+          git checkout -B "${SYNC_BRANCH}" upstream/main
+          git push --force-with-lease origin "${SYNC_BRANCH}"
+          echo "Merge conflict detected. Published ${SYNC_BRANCH} for PR review." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update sync PR
+        if: steps.sync_state.outputs.needed == 'true' && steps.merge_upstream.outcome == 'failure'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const head = `${owner}:${process.env.SYNC_BRANCH}`;
+            const base = "main";
+            const title = "chore: sync upstream/main";
+            const body = [
+              "Automated upstream sync hit merge conflicts.",
+              "",
+              `- Upstream branch: \`upstream/main\``,
+              `- Sync branch: \`${process.env.SYNC_BRANCH}\``,
+              `- Workflow run: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
+              "",
+              "Resolve the conflicts in this PR, then merge it into `main`.",
+            ].join("\n");
+
+            const { data: pulls } = await github.rest.pulls.list({
+              owner,
+              repo,
+              state: "open",
+              head,
+              base,
+            });
+
+            if (pulls.length > 0) {
+              const pull_number = pulls[0].number;
+              await github.rest.pulls.update({
+                owner,
+                repo,
+                pull_number,
+                title,
+                body,
+              });
+              core.summary.addRaw(`Reused existing PR #${pull_number} for upstream sync conflicts.\n`);
+              await core.summary.write();
+              return;
+            }
+
+            const { data: pull } = await github.rest.pulls.create({
+              owner,
+              repo,
+              head: process.env.SYNC_BRANCH,
+              base,
+              title,
+              body,
+            });
+
+            core.summary.addRaw(`Opened PR #${pull.number} for upstream sync conflicts.\n`);
+            await core.summary.write();
