@@ -1,0 +1,60 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: "5 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch remotes
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/openclaw/openclaw.git 2>/dev/null || true
+          git fetch origin main
+          git fetch upstream main
+
+      - name: Check whether sync is needed
+        id: sync_state
+        run: |
+          set -euo pipefail
+          git checkout main
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "Fork already contains upstream/main." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "needed=true" >> "$GITHUB_OUTPUT"
+          echo "Sync required from upstream/main into fork main." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Merge upstream/main
+        if: steps.sync_state.outputs.needed == 'true'
+        run: |
+          set -euo pipefail
+          git merge --no-edit upstream/main
+
+      - name: Push fork main
+        if: steps.sync_state.outputs.needed == 'true'
+        run: git push origin main
