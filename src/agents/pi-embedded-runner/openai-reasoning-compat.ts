@@ -16,11 +16,11 @@ const REASONING_FIELDS = ["reasoning_content", "reasoning", "reasoning_text"] as
 export function wrapStreamFnForReasoningConsistency(streamFn: StreamFn): StreamFn {
   return (model, context, options) => {
     const prevOnPayload = options?.onPayload;
-    const nextOnPayload = (payload: unknown) => {
+    const nextOnPayload = (payload: unknown, m: Model<Api>) => {
       patchReasoningContent(payload);
-      prevOnPayload?.(payload);
+      prevOnPayload?.(payload, m);
     };
-    return streamFn(model as Model<Api>, context, {
+    return streamFn(model, context, {
       ...options,
       onPayload: nextOnPayload,
     });
@@ -28,32 +28,48 @@ export function wrapStreamFnForReasoningConsistency(streamFn: StreamFn): StreamF
 }
 
 function patchReasoningContent(payload: unknown): void {
-  if (!payload || typeof payload !== "object") return;
+  if (!payload || typeof payload !== "object") {
+    return;
+  }
   const params = payload as { messages?: unknown[] };
-  if (!Array.isArray(params.messages)) return;
+  if (!Array.isArray(params.messages)) {
+    return;
+  }
 
   // Detect which reasoning field (if any) is already present on an assistant message.
   let usedField: string | null = null;
   for (const msg of params.messages) {
-    if (!msg || typeof msg !== "object") continue;
+    if (!msg || typeof msg !== "object") {
+      continue;
+    }
     const record = msg as Record<string, unknown>;
-    if (record.role !== "assistant") continue;
+    if (record.role !== "assistant") {
+      continue;
+    }
     for (const field of REASONING_FIELDS) {
       if (field in record) {
         usedField = field;
         break;
       }
     }
-    if (usedField) break;
+    if (usedField) {
+      break;
+    }
   }
 
-  if (!usedField) return;
+  if (!usedField) {
+    return;
+  }
 
   // Backfill the field on every assistant message that is missing it.
   for (const msg of params.messages) {
-    if (!msg || typeof msg !== "object") continue;
+    if (!msg || typeof msg !== "object") {
+      continue;
+    }
     const record = msg as Record<string, unknown>;
-    if (record.role !== "assistant") continue;
+    if (record.role !== "assistant") {
+      continue;
+    }
     if (!(usedField in record)) {
       record[usedField] = "";
     }
